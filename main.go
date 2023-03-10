@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -128,7 +129,66 @@ func FCFSSchedule(w io.Writer, title string, processes []Process) {
 }
 
 func SJFPrioritySchedule(w io.Writer, title string, processes []Process) {
+	var (
+		schedule = make([][]string, len(processes))
+		gantt    = make([]TimeSlice, 0)
+	)
+	copyOfProcesses := make([]Process, len(processes))
+	copy(copyOfProcesses, processes)
 
+	sort.Slice(copyOfProcesses, func(i, j int) bool {
+		return copyOfProcesses[i].Priority > copyOfProcesses[j].Priority
+	})
+
+	remainingProcesses := make([]Process, len(processes))
+	copy(remainingProcesses, copyOfProcesses)
+
+	currentTime := int64(0)
+	waitTime := int64(0)
+	turnaroundTime := int64(0)
+	count := 0
+
+	for len(remainingProcesses) > 0 {
+		var nextProcessIndex int
+		for i, process := range remainingProcesses {
+			if process.ArrivalTime <= currentTime {
+				nextProcessIndex = i
+				break
+			}
+		}
+
+		nextProcess := remainingProcesses[nextProcessIndex]
+		remainingProcesses = append(remainingProcesses[:nextProcessIndex], remainingProcesses[nextProcessIndex+1:]...)
+
+		waitTime += currentTime - nextProcess.ArrivalTime
+		exitTime := currentTime + nextProcess.BurstDuration
+		turnaroundTime += exitTime - nextProcess.ArrivalTime
+		currentTime = exitTime
+
+		schedule[count] = []string{
+			fmt.Sprint(nextProcess.ProcessID),
+			fmt.Sprint(nextProcess.Priority),
+			fmt.Sprint(nextProcess.BurstDuration),
+			fmt.Sprint(nextProcess.ArrivalTime),
+			fmt.Sprint(currentTime - nextProcess.ArrivalTime - nextProcess.BurstDuration),
+			fmt.Sprint(exitTime - nextProcess.ArrivalTime),
+			fmt.Sprint(exitTime),
+		}
+		count++
+		gantt = append(gantt, TimeSlice{
+			PID:   nextProcess.ProcessID,
+			Start: currentTime,
+			Stop:  exitTime - nextProcess.BurstDuration,
+		})
+	}
+
+	avgWaitTime := float64(waitTime) / float64(len(processes))
+	avgTurnaroundTime := float64(turnaroundTime) / float64(len(processes))
+	throughput := float64(len(processes)) / float64(currentTime)
+
+	outputTitle(w, title)
+	outputGantt(w, gantt)
+	outputSchedule(w, schedule, avgWaitTime, avgTurnaroundTime, throughput)
 }
 
 func SJFSchedule(w io.Writer, title string, processes []Process) {
