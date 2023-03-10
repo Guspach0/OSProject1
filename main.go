@@ -30,11 +30,11 @@ func main() {
 	// First-come, first-serve scheduling
 	FCFSSchedule(os.Stdout, "First-come, first-serve", processes)
 
-	//SJFSchedule(os.Stdout, "Shortest-job-first", processes)
+	SJFSchedule(os.Stdout, "Shortest-job-first", processes)
 	//
-	//SJFPrioritySchedule(os.Stdout, "Priority", processes)
+	SJFPrioritySchedule(os.Stdout, "Priority", processes)
 	//
-	//RRSchedule(os.Stdout, "Round-robin", processes)
+	RRSchedule(os.Stdout, "Round-robin", processes)
 }
 
 func openProcessingFile(args ...string) (*os.File, func(), error) {
@@ -127,11 +127,32 @@ func FCFSSchedule(w io.Writer, title string, processes []Process) {
 	outputSchedule(w, schedule, aveWait, aveTurnaround, aveThroughput)
 }
 
-//func SJFPrioritySchedule(w io.Writer, title string, processes []Process) { }
-//
-//func SJFSchedule(w io.Writer, title string, processes []Process) { }
-//
-//func RRSchedule(w io.Writer, title string, processes []Process) { }
+func SJFPrioritySchedule(w io.Writer, title string, processes []Process) {
+
+}
+
+func SJFSchedule(w io.Writer, title string, processes []Process) {
+
+}
+
+func RRSchedule(w io.Writer, title string, processes []Process) {
+
+}
+
+func copyRemainingTime(dst []int64, src []Process) {
+	for i := range src {
+		dst[i] = src[i].BurstDuration
+	}
+}
+
+func allCompleted(completed []bool) bool {
+	for i := range completed {
+		if !completed[i] {
+			return false
+		}
+	}
+	return true
+}
 
 //endregion
 
