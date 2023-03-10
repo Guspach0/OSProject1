@@ -128,75 +128,272 @@ func FCFSSchedule(w io.Writer, title string, processes []Process) {
 	outputSchedule(w, schedule, aveWait, aveTurnaround, aveThroughput)
 }
 
-func SJFPrioritySchedule(w io.Writer, title string, processes []Process) {
-	var (
-		schedule = make([][]string, len(processes))
-		gantt    = make([]TimeSlice, 0)
-	)
-	copyOfProcesses := make([]Process, len(processes))
-	copy(copyOfProcesses, processes)
+type ProcessStatus struct {
+	ProcessID int64
+	StartTime int64
+	EndTime   int64
+}
 
-	sort.Slice(copyOfProcesses, func(i, j int) bool {
-		return copyOfProcesses[i].Priority > copyOfProcesses[j].Priority
+func SJFPrioritySchedule(w io.Writer, title string, processes []Process) {
+	processesBurst := make([]Process, len(processes))
+	copy(processesBurst, processes)
+	// initializing variables
+	var (
+		schedule            = make([][]string, len(processes))
+		gantt               = make([]TimeSlice, 0)
+		currentTime         int64
+		totalWaitTime       int64
+		totalTurnaroundTime int64
+		numCompleted        int64
+	)
+	//making a copy to use to get burst duration later since I subtract from the orginal burst duration
+	processesCopy := make([]Process, len(processes))
+	copy(processesCopy, processes)
+
+	// sort both arrays by arrival time
+	sort.Slice(processesBurst, func(i, j int) bool {
+		return processesBurst[i].ArrivalTime < processesBurst[j].ArrivalTime
+	})
+	sort.Slice(processesCopy, func(i, j int) bool {
+		return processesCopy[i].ArrivalTime < processesCopy[j].ArrivalTime
 	})
 
-	remainingProcesses := make([]Process, len(processes))
-	copy(remainingProcesses, copyOfProcesses)
+	// n is the number of process and status is meant to store the id and start/end times.
+	n := len(processes)
+	status := make([]ProcessStatus, n)
 
-	currentTime := int64(0)
-	waitTime := int64(0)
-	turnaroundTime := int64(0)
-	count := 0
+	// while I have not completed all the process, go to the next "second"
+	for numCompleted < int64(n) {
+		var shortestJobIndex int = -1
+		var shortestJobDuration int64 = 999 //not sure how long the burst can be, but I doubt it will be bigger than 999
 
-	for len(remainingProcesses) > 0 {
-		var nextProcessIndex int
-		for i, process := range remainingProcesses {
-			if process.ArrivalTime <= currentTime {
-				nextProcessIndex = i
-				break
+		// get the shortest process that hasnt had an end time
+		for i := 0; i < n; i++ {
+			if processesBurst[i].ArrivalTime <= currentTime && status[i].EndTime == 0 && processesBurst[i].BurstDuration < shortestJobDuration {
+				shortestJobIndex = i
+				shortestJobDuration = processesBurst[i].BurstDuration
 			}
 		}
 
-		nextProcess := remainingProcesses[nextProcessIndex]
-		remainingProcesses = append(remainingProcesses[:nextProcessIndex], remainingProcesses[nextProcessIndex+1:]...)
-
-		waitTime += currentTime - nextProcess.ArrivalTime
-		exitTime := currentTime + nextProcess.BurstDuration
-		turnaroundTime += exitTime - nextProcess.ArrivalTime
-		currentTime = exitTime
-
-		schedule[count] = []string{
-			fmt.Sprint(nextProcess.ProcessID),
-			fmt.Sprint(nextProcess.Priority),
-			fmt.Sprint(nextProcess.BurstDuration),
-			fmt.Sprint(nextProcess.ArrivalTime),
-			fmt.Sprint(currentTime - nextProcess.ArrivalTime - nextProcess.BurstDuration),
-			fmt.Sprint(exitTime - nextProcess.ArrivalTime),
-			fmt.Sprint(exitTime),
+		// no job, go to next "second"
+		if shortestJobIndex == -1 {
+			currentTime++
+			continue
 		}
-		count++
-		gantt = append(gantt, TimeSlice{
-			PID:   nextProcess.ProcessID,
-			Start: currentTime,
-			Stop:  exitTime - nextProcess.BurstDuration,
-		})
+
+		// if we have a process, get the start time and subtract a second
+		status[shortestJobIndex].ProcessID = processesBurst[shortestJobIndex].ProcessID
+		if status[shortestJobIndex].StartTime == 0 {
+			status[shortestJobIndex].StartTime = currentTime
+		}
+		processesBurst[shortestJobIndex].BurstDuration--
+		currentTime++
+
+		// if the process is done, get the end time, add it to completed tally, and get wait and turnaround
+		if processesBurst[shortestJobIndex].BurstDuration == 0 {
+			status[shortestJobIndex].EndTime = currentTime
+			numCompleted++
+			if status[shortestJobIndex].StartTime == 1 {
+				status[shortestJobIndex].StartTime = 0
+			}
+			totalWaitTime += status[shortestJobIndex].StartTime - processesBurst[shortestJobIndex].ArrivalTime
+			totalTurnaroundTime += status[shortestJobIndex].EndTime - processesBurst[shortestJobIndex].ArrivalTime
+		}
 	}
 
-	avgWaitTime := float64(waitTime) / float64(len(processes))
-	avgTurnaroundTime := float64(turnaroundTime) / float64(len(processes))
-	throughput := float64(len(processes)) / float64(currentTime)
+	// calculate and output, formatted into the original style
+	averageWaitTime := float64(totalWaitTime) / float64(n)
+	averageTurnaroundTime := float64(totalTurnaroundTime) / float64(n)
+	throughput := float64(n) / float64(currentTime)
 
+	for i := 0; i < n; i++ {
+		waitTime := status[i].StartTime - processesBurst[i].ArrivalTime
+		turnaroundTime := status[i].EndTime - processesBurst[i].ArrivalTime
+		schedule[i] = []string{
+			fmt.Sprint(processesBurst[i].ProcessID),
+			fmt.Sprint(processesBurst[i].Priority),
+			fmt.Sprint(processesCopy[i].BurstDuration),
+			fmt.Sprint(processesBurst[i].ArrivalTime),
+			fmt.Sprint(waitTime),
+			fmt.Sprint(turnaroundTime),
+			fmt.Sprint(status[i].EndTime),
+		}
+		gantt = append(gantt, TimeSlice{
+			PID:   processesBurst[i].ProcessID,
+			Start: status[i].StartTime,
+			Stop:  turnaroundTime,
+		})
+
+	}
 	outputTitle(w, title)
 	outputGantt(w, gantt)
-	outputSchedule(w, schedule, avgWaitTime, avgTurnaroundTime, throughput)
+	outputSchedule(w, schedule, averageWaitTime, averageTurnaroundTime, throughput)
 }
 
 func SJFSchedule(w io.Writer, title string, processes []Process) {
+	// initialize variables
+	var (
+		currentTime         int64
+		totalWaitTime       int64
+		totalTurnaroundTime int64
+		schedule            = make([][]string, len(processes))
+		gantt               = make([]TimeSlice, 0)
+	)
+	// make copies of the processes
+	processesBurst := make([]Process, len(processes))
+	copy(processesBurst, processes)
+	processesCopy := make([]Process, len(processes))
+	copy(processesCopy, processes)
 
+	// variable to get the number of processes and to track the start/end times
+	n := len(processes)
+	status := make([]ProcessStatus, n)
+
+	// sort
+	sort.Slice(processesBurst, func(i, j int) bool {
+		return processesBurst[i].ArrivalTime < processesBurst[j].ArrivalTime
+	})
+	sort.Slice(processesCopy, func(i, j int) bool {
+		return processesCopy[i].ArrivalTime < processesCopy[j].ArrivalTime
+	})
+
+	// while there are still jobs unfinished
+	for numCompleted := 0; numCompleted < n; currentTime++ {
+		var shortestJobIndex int = -1
+		var shortestJobDuration int64 = 1<<63 - 1
+		//find the shortest job that isnt done
+		for i := 0; i < n; i++ {
+			if processesBurst[i].ArrivalTime <= currentTime && status[i].EndTime == 0 && processesBurst[i].BurstDuration < shortestJobDuration {
+				shortestJobIndex = i
+				shortestJobDuration = processesBurst[i].BurstDuration
+			}
+		}
+
+		// when we are at a process that isnt done, take note of the time started, subtract the burst duration, and check if done while
+		// storing the times for the output
+		if shortestJobIndex != -1 {
+			status[shortestJobIndex].StartTime = currentTime
+			processesBurst[shortestJobIndex].BurstDuration--
+			if processesBurst[shortestJobIndex].BurstDuration == 0 {
+				numCompleted++
+				status[shortestJobIndex].EndTime = currentTime + 1
+				totalWaitTime += status[shortestJobIndex].StartTime - processesBurst[shortestJobIndex].ArrivalTime
+				totalTurnaroundTime += status[shortestJobIndex].EndTime - processesBurst[shortestJobIndex].ArrivalTime
+			}
+		}
+	}
+
+	// calculate and output, formatted into the original style
+	for i := 0; i < n; i++ {
+		waitTime := status[i].StartTime - processesBurst[i].ArrivalTime
+		turnaroundTime := status[i].EndTime - processesBurst[i].ArrivalTime
+
+		schedule[i] = []string{
+			fmt.Sprint(processesBurst[i].ProcessID),
+			fmt.Sprint(processesBurst[i].Priority),
+			fmt.Sprint(processesCopy[i].BurstDuration),
+			fmt.Sprint(processesBurst[i].ArrivalTime),
+			fmt.Sprint(waitTime),
+			fmt.Sprint(turnaroundTime),
+			fmt.Sprint(status[i].EndTime),
+		}
+		gantt = append(gantt, TimeSlice{
+			PID:   processesBurst[i].ProcessID,
+			Start: status[i].StartTime,
+			Stop:  turnaroundTime,
+		})
+	}
+
+	averageWaitTime := float64(totalWaitTime) / float64(n)
+	averageTurnaroundTime := float64(totalTurnaroundTime) / float64(n)
+	throughput := float64(n) / float64(currentTime)
+
+	outputTitle(w, title)
+	outputGantt(w, gantt)
+	outputSchedule(w, schedule, averageWaitTime, averageTurnaroundTime, throughput)
 }
 
 func RRSchedule(w io.Writer, title string, processes []Process) {
+	// initializing variables
+	var (
+		currentTime         int64
+		totalWaitTime       int64
+		totalTurnaroundTime int64
+		numCompleted        int64
+		schedule            = make([][]string, len(processes))
+		gantt               = make([]TimeSlice, 0)
+	)
+	// make copies of the processes
+	processesBurst := make([]Process, len(processes))
+	copy(processesBurst, processes)
+	processesCopy := make([]Process, len(processes))
+	copy(processesCopy, processes)
 
+	// variable to get the number of processes and to track the start/end times
+	n := len(processes)
+	status := make([]ProcessStatus, n)
+
+	// initialize the queue with the indices of the processes
+	queue := make([]int, n)
+	for i := 0; i < n; i++ {
+		queue[i] = i
+	}
+
+	for numCompleted < int64(n) {
+		// get the index of the next process to execute
+		index := queue[0]
+		queue = queue[1:]
+
+		if status[index].StartTime == 0 {
+			status[index].StartTime = currentTime
+		}
+
+		// subtract the burst duration by a time quantum of 1
+		if processes[index].BurstDuration > 1 {
+			processes[index].BurstDuration--
+			queue = append(queue, index)
+		} else {
+			processes[index].BurstDuration = 0
+			status[index].EndTime = currentTime + 1
+			numCompleted++
+			totalTurnaroundTime += status[index].EndTime - processes[index].ArrivalTime
+		}
+
+		currentTime++
+	}
+
+	// calculate and output, formatted into the original style
+	for i := 0; i < n; i++ {
+		turnaroundTime := status[i].EndTime - processesBurst[i].ArrivalTime
+		totalWaitTime += turnaroundTime - processesCopy[i].BurstDuration
+	}
+	averageWaitTime := float64(totalWaitTime) / float64(n)
+	averageTurnaroundTime := float64(totalTurnaroundTime) / float64(n)
+	throughput := float64(n) / float64(currentTime)
+
+	//
+	for i := 0; i < n; i++ {
+
+		turnaroundTime := status[i].EndTime - processesBurst[i].ArrivalTime
+		waitTime := turnaroundTime - processesCopy[i].BurstDuration
+		schedule[i] = []string{
+			fmt.Sprint(processesBurst[i].ProcessID),
+			fmt.Sprint(processesBurst[i].Priority),
+			fmt.Sprint(processesCopy[i].BurstDuration),
+			fmt.Sprint(processesBurst[i].ArrivalTime),
+			fmt.Sprint(waitTime),
+			fmt.Sprint(turnaroundTime),
+			fmt.Sprint(status[i].EndTime),
+		}
+		gantt = append(gantt, TimeSlice{
+			PID:   processesBurst[i].ProcessID,
+			Start: status[i].StartTime,
+			Stop:  turnaroundTime,
+		})
+	}
+	outputTitle(w, title)
+	outputGantt(w, gantt)
+	outputSchedule(w, schedule, averageWaitTime, averageTurnaroundTime, throughput)
 }
 
 func copyRemainingTime(dst []int64, src []Process) {
